@@ -1,0 +1,255 @@
+### base config ####
+BASE: &BASE
+    data_dir: '/ocean/projects/atm170004p/jakhar/py2d/results/Re5000_fkx0fky4_r0.1_b20/NoSGS/NX256/dt0.0002_IC1/'
+
+    exp_dir: '/ocean/projects/atm170004p/jakhar/SSL-for-2D-Turbulence/results/'
+
+    init_seed: 0
+    
+    # Login for Weights and biases
+    log_to_screen: !!bool True
+    log_to_wandb: !!bool False
+    wandb_table_logging_interval: 25
+    project: '2DTurb-ViT-forward-backward' # 
+    group: 'forward'
+    name: 'test'
+
+    diagnostic_logs: !!bool False
+
+    fresh_start: True # Training from checkpoint vs start (Need to test if it resumes at checkpoint)
+    early_stopping: !!bool False  # Not implemented
+
+    save_checkpoint: !!bool True # Two checkoiunts to save model weights: best and last epoc
+    ckpt_epoch_list: [25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300, 325, 350, 375, 400, 425, 450, 475, 500, 600, 700, 800, 900, 1000]
+
+    # train_file_range: [[200000, 210000], [995000, 1004997]]
+    train_file_range: [200000, 210000]
+    valid_file_range: [310000, 312000]
+    batch_size: 4 # Global batch size (not per GPU)
+    target_step: 3 # Number of time steps to predict in the future (prediction time step = target_step * saved time step)
+    num_workers: 4 # Number of workers for data loader per GPU (no imporvement after 2)
+    pin_memory: !!bool True
+
+    optimizer_type: 'AdamW' # ['Adam', 'AdamW']
+
+    gpu: !!bool True
+
+    lr: 5e-4
+
+    lr_min: 1e-6 # Minimum learning rate # CosineAnnealingLR CosineAnnealingWarmRestarts ReduceLROnPlateau
+    scheduler: 'ReduceLROnPlateau' # 'CosineAnnealingLR' 'CosineAnnealingWarmRestarts' 'ReduceLROnPlateau'
+
+    # ReduceLROnPlateau
+    factor : 0.2 # factor for reducing learning rate
+    patience : 5 # patience for reducing learning rate
+    cooldown : 10 # cooldown for reducing learning rate
+
+    # CosineAnnealingWarmRestarts
+    T_0: 200 # Number of epochs until the first restart # 
+    T_mult: 1 # Multiplicative factor for the number of iterations between restarts # CosineAnnealingWarmRestarts
+
+    warmup: !!bool False # Warmup for LR scheduler (Start with low LR and then increase)
+    warmup_startfactor: 0.001 
+    warmup_totaliters: 3 # Warm-up learning rate for the first N epochs
+
+    weight_decay: 1e-7 # 1e-7   # 1e-7 for video; 1e-6 for image # Regularization term for loss function (L2 norm)
+    max_epochs: 1000
+    checkpointing: !!bool False # True : For large models gradinet checkpointing is used to save memory (slows down upto 2 or so) May need to increase for patch size = 2
+ 
+    integrator: null # 'null' 'E1' 'RK2' 'RK4' None, Euler 1st order, Runge-Kutta 2nd order, Runge-Kutta 4th order
+
+    spectral_loss: !!bool False # True: Use spectral loss for training
+    spectral_loss_weight: 1 # Weight (Regularizer Coefficient) for spectral loss
+    spectral_loss_threshold_wavenumber: 50 # Threshold wavenumber for spectral loss
+
+    train_tendencies: !!bool False #True # Training neural netwrok on difference of X(t+dt) - X(t) = Tendencies
+
+    img_size: 256
+    patch_size: 4
+    num_frames: 2 # Number of frames to consider for input (t, t-\deltat, t-2\deltat)
+    tubelet_size: 2 # Number of frames to consider for input imbedding - multiple timesteps are included in the same frame
+    in_chans: 2 # Number of input channels (u, v, ...)
+    encoder_embed_dim: 192 # 192 96
+    encoder_depth: 4 
+    encoder_num_heads: 4 
+    decoder_embed_dim: 96 # 96
+    decoder_depth: 4 
+    decoder_num_heads: 4 
+    mlp_ratio: 4.
+    num_out_frames: 1  # Numebr of output frames (time steps) to predict
+    patch_recovery: "subpixel_conv"  #["linear", "conv", "subpixel_conv"]
+
+    mae_finetune: False
+
+
+
+MAE_PRETRAIN: &MAE_PRETRAIN
+    <<: *BASE
+
+    init_seed: 0
+
+    log_to_screen: !!bool True
+    log_to_wandb: !!bool True
+    wandb_table_logging_interval: 25
+    project: 'SSL-2DTurb'
+    group: 'Dhruvit-mae-pretrain'
+    name: 'MAE_mr0.5_seed_0_2phase'
+    diagnostic_logs: !!bool True
+
+    ckpt_epoch_list: []
+
+    max_epochs: 500
+
+    target_step: 0
+    target_step_hist: 3
+
+    train_file_range: [[200000, 210000], [995000, 1004997]]
+    valid_file_range: [310000, 312000]
+
+    num_frames: 2
+    tubelet_size: 2
+    num_out_frames: 2  
+
+    mask_ratio: 0.5
+
+
+
+MAE_FINETUNE: &MAE_FINETUNE
+    <<: *MAE_PRETRAIN
+
+    init_seed: 0 
+
+    log_to_screen: !!bool True
+    log_to_wandb: !!bool True
+    wandb_table_logging_interval: 25
+    project: 'SSL-2DTurb'
+    group: 'Dhruvit-mae-finetune'
+    name: 'MAE_mr0.5_seed_0_2phase_ft_dropPR'
+    diagnostic_logs: !!bool True
+
+    ckpt_epoch_list: [1, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300, 325, 350, 375, 400, 425, 450, 475, 500]
+
+    target_step: 3
+    target_step_hist: 3
+
+    train_file_range: [[200000, 210000], [995000, 1004997]]
+    valid_file_range: [310000, 312000]
+   
+    lr: 5e-4
+    scheduler: 'ReduceLROnPlateau'
+    warmup: !!bool False
+    max_epochs: 500
+
+    num_out_frames: 1
+
+    mae_finetune: True
+    mae_finetune_fp: '/home/jovyan/shared/dpp94/ssl-2dturb-2/MAE_PRETRAIN/MAE_mr0.5_seed_0_2phase/training_checkpoints/best_ckpt.tar'
+    freeze_layers: [] #['encoder', 'patch_embed']   
+    drop_layers: ['patchrecovery'] #['decoder', 'patchrecovery']
+
+
+
+SMAE_PRETRAIN: &SMAE_PRETRAIN
+    <<: *BASE
+
+    init_seed: 0 
+
+    log_to_screen: !!bool True
+    log_to_wandb: !!bool True
+    wandb_table_logging_interval: 25
+    project: 'SSL-2DTurb'
+    group: 'Dhruvit-smae-pretrain'
+    name: 'SMAE_seed_0_spatial_pixelonly_targetfull_0031_wtransition'
+    diagnostic_logs: !!bool True
+
+    ckpt_epoch_list: []
+
+    target_step: 0
+    target_step_hist: 3
+
+    train_file_range: [915000, 935000] #[[200000, 210000], [995000, 1004997]]
+    valid_file_range: [310000, 312000]
+    batch_size: 64 # Global batch size (not per GPU)
+
+    lr: 5e-4
+    max_epochs: 500
+    weight_decay: 1e-7
+    proj_drop: 0.1 # dropout rate for projection ops
+    attn_drop: 0.1 # dropout rate for attention
+    drop_path: 0. # float(0., 1.) -> np.linspace(0, drop_path, encoder_depth)
+
+    num_frames: 2
+    tubelet_size: 2
+    num_out_frames: 2
+
+    preprocess: 'FourierPatch'  # ['Fourier', 'FourierPatch', 'Wavelet']
+    # For preprocess = 'FourierPatch'
+    spectral_patch_size: [1, 8, 8]    # [patch_t patch_h, patch_w]
+    spectral_mask_ratio: 0.125
+    target_full: True   # Use the full image as target
+    spectral_mask_spatial_only: True
+    # For preprocess = 'Fourier'
+    window_width: 42
+    window_center_kx: [24, 24] # range for locating center of window in x
+    window_center_ky: [24, 24]
+    window_type: 'gaussian' # ['gaussian', 'tukey', or 'rectangular']
+    window_gaussian_std: 7
+    window_tukey_alpha: 0.5
+    randomized_filters: False
+    filter_shuffle: True
+    use_spectral_weights: False
+    spectrally_weigh_input: False
+    spectrally_weigh_output: False
+
+    # Additional spectral parameters
+    Fourier_loss: False
+    Fourier_loss_weighted: 'log'    # [None, 'inverse_power', 'log']
+    Fourier_loss_phase_reg: 1.
+    Fourier_loss_adaptive_scaling: True
+    Fourier_eps: 1e-8
+    pixel_loss: True
+    pixel_loss_reg: 1.
+    spectral_mask_apply_norm: False  # bool
+    spectral_mask_apply_affine: False  # bool
+
+    # curriculum learning
+    enable_curriculum_learning: False
+    cl_epochs: [0, 500]    # list of epochs for defining curriculum/schedule
+    cl_kx_values: [16, 112]
+    cl_ky_values: [16, 112]
+
+
+
+SMAE_FINETUNE: &SMAE_FINETUNE
+    <<: *BASE
+
+    log_to_screen: !!bool True
+    log_to_wandb: !!bool True
+    wandb_table_logging_interval: 25
+    project: 'SSL-2DTurb'
+    group: 'Dhruvit-smae-finetune'
+    name: 'SMAE_seed_0_spatial_pixelonly_targetfull_0031_ft_dropPR'
+    diagnostic_logs: !!bool True
+
+    ckpt_epoch_list: [1, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300, 325, 350, 375, 400, 425, 450, 475, 500]
+
+    target_step: 3
+    target_step_hist: 3
+
+    train_file_range: [[200000, 210000], [995000, 1004997]]
+    valid_file_range: [310000, 312000]
+    batch_size: 32 # Global batch size (not per GPU)
+
+    lr: 5e-4
+    scheduler: 'ReduceLROnPlateau'
+    warmup: !!bool False
+    max_epochs: 500
+    
+    num_frames: 2
+    tubelet_size: 2
+    num_out_frames: 1
+
+    mae_finetune: True
+    mae_finetune_fp: '/lus/eagle/projects/MDClimSim/dpp94/SSL-2DTurb/SMAE_PRETRAIN/SMAE_seed_0_2phase_spatial_pixelonly_targetfull_0031/training_checkpoints/best_ckpt.tar'
+    freeze_layers: [] #['encoder', 'patch_embed']   
+    drop_layers: ['patchrecovery'] #['decoder', 'patchrecovery']  # patchembed and patchrecovery both automatically dropped due to shape mismatch

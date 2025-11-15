@@ -160,10 +160,15 @@ class Trainer():
 
         # Set learning rate scheduluer
         if params["scheduler"] == 'ReduceLROnPlateau':
-            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=0.2, patience=5, mode='min')
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=float(params['factor']), patience=int(params['patience']), 
+                                                                        cooldown=int(params['cooldown']), mode='min')
         elif params["scheduler"] == 'CosineAnnealingLR':
-            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=params["max_epochs"],
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=params["max_epochs"], eta_min=float(params['lr_min']),
                                                                         last_epoch=self.startEpoch-1)
+        elif params["scheduler"] == 'CosineAnnealingWarmRestarts':
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=int(params["T_0"]), 
+                                                                                  T_mult=int(params["T_mult"]), eta_min=float(params['lr_min']),
+                                                                                  last_epoch=self.startEpoch-1)
         else:
             self.scheduler = None
 

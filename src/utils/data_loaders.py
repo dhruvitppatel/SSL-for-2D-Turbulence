@@ -102,15 +102,15 @@ class TurbulenceDataset(torch.utils.data.Dataset):
             mean_fp = os.path.join(self.data_dir, 'stats', 'mean_full_field.npy')
             std_fp = os.path.join(self.data_dir, 'stats', 'std_full_field.npy')
             #mean_std_data = loadmat(os.path.join(self.data_dir, 'stats', 'mean_std_DNS_NX64_dt0.0005_IC1.mat_1.0.mat'))
-            # mean_std_data = loadmat(os.path.join(self.data_dir, 'stats', 'mean_std_DNS_NX256_dt0.0002_IC1.mat_1.0.mat'))
+            mean_std_data = loadmat(os.path.join(self.data_dir, 'stats', 'mean_std_DNS_NX256_dt0.0002_IC1.mat_1.0.mat'))
         else:
             mean_fp = os.path.join(self.data_dir, 'stats', 'mean_tendencies.npy')
             std_fp = os.path.join(self.data_dir, 'stats', 'std_tendencies.npy')
 
-        #mean = [mean_std_data['U_mean'], mean_std_data['V_mean'] ]
-        #std = [mean_std_data['U_std'], mean_std_data['V_std'] ]
-        mean = list(np.load(mean_fp)) 
-        std = list(np.load(std_fp))
+        mean = np.asarray([mean_std_data['U_mean'], mean_std_data['V_mean']])
+        std = np.asarray([mean_std_data['U_std'], mean_std_data['V_std'] ])
+        # mean = list(np.load(mean_fp)) 
+        # std = list(np.load(std_fp))
         print(f'mean: {mean}')
         print(f'std: {std}')
 

@@ -120,7 +120,8 @@ def main(config):
                                         num_frames=train_params["num_frames"],
                                         num_out_frames=train_params["num_out_frames"],
                                         num_workers=2,
-                                        pin_memory=train_params["pin_memory"])
+                                        pin_memory=train_params["pin_memory"],
+                                        forward_step=train_params["forward_step"])
 
     # Perform short analysis
     if rmse or acc or spectra:
@@ -138,7 +139,8 @@ def main(config):
                                         num_frames=1, #params["num_frames"],
                                         num_out_frames=1, #params["num_out_frames"],
                                         num_workers=2,
-                                        pin_memory=train_params["pin_memory"])
+                                        pin_memory=train_params["pin_memory"],
+                                        forward_step=train_params["forward_step"])
 
         climo_data, _ = next(iter(dataloader_climo))
         print(f'climo_data.shape: {climo_data.shape}')
@@ -231,7 +233,8 @@ def main(config):
                                                             num_frames=train_params["num_frames"],
                                                             num_out_frames=train_params["num_out_frames"],
                                                             num_workers=2,
-                                                            pin_memory=train_params["pin_memory"])
+                                                            pin_memory=train_params["pin_memory"],
+                                                            forward_step=train_params["forward_step"])
 
             inp, tar = next(iter(dataloader_video))
 

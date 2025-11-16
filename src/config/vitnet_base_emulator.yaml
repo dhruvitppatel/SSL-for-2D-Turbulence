@@ -29,15 +29,16 @@ BASE: &BASE
     target_step: 3 # Number of time steps to predict in the future (prediction time step = target_step * saved time step)
     num_workers: 4 # Number of workers for data loader per GPU (no imporvement after 2)
     pin_memory: !!bool True
-
-    optimizer_type: 'AdamW' # ['Adam', 'AdamW']
-
     gpu: !!bool True
 
-    lr: 5e-4
+    # Direction of prediction: True -> predict forward in time (t -> t+target_step)
+    # False -> predict backward in time (t -> t-target_step)
+    forward_step: !!bool False
 
+    optimizer_type: 'AdamW' # ['Adam', 'AdamW']
+    lr: 1e-3
     lr_min: 1e-6 # Minimum learning rate # CosineAnnealingLR CosineAnnealingWarmRestarts ReduceLROnPlateau
-    scheduler: 'ReduceLROnPlateau' # 'CosineAnnealingLR' 'CosineAnnealingWarmRestarts' 'ReduceLROnPlateau'
+    scheduler: 'CosineAnnealingLR' # 'CosineAnnealingLR' 'CosineAnnealingWarmRestarts' 'ReduceLROnPlateau'
 
     # ReduceLROnPlateau
     factor : 0.2 # factor for reducing learning rate
@@ -66,8 +67,8 @@ BASE: &BASE
 
     img_size: 256
     patch_size: 4
-    num_frames: 2 # Number of frames to consider for input (t, t-\deltat, t-2\deltat)
-    tubelet_size: 2 # Number of frames to consider for input imbedding - multiple timesteps are included in the same frame
+    num_frames: 1 # Number of frames to consider for input (t, t-\deltat, t-2\deltat)
+    tubelet_size: 1 # Number of frames to consider for input imbedding - multiple timesteps are included in the same frame
     in_chans: 2 # Number of input channels (u, v, ...)
     encoder_embed_dim: 192 # 192 96
     encoder_depth: 4 

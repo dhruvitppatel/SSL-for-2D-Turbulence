@@ -39,7 +39,8 @@ class Trainer():
                                                                                        num_frames=params["num_frames"],
                                                                                        num_out_frames=params["num_out_frames"],
                                                                                        num_workers=params["num_workers"],
-                                                                                       pin_memory=params["pin_memory"])
+                                                                                       pin_memory=params["pin_memory"],
+                                                                                       forward_step=params['forward_step'])
 
         self.valid_dataloader, self.valid_dataset = get_dataloader(data_dir=params["data_dir"],
                                                                    file_range=params["valid_file_range"],
@@ -51,7 +52,8 @@ class Trainer():
                                                                    num_frames=params["num_frames"],
                                                                    num_out_frames=params["num_out_frames"],
                                                                    num_workers=params["num_workers"],
-                                                                   pin_memory=params["pin_memory"])
+                                                                   pin_memory=params["pin_memory"],
+                                                                   forward_step=params['forward_step'])
         logging.info("data loader initialized")
 
  

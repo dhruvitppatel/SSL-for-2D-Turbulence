@@ -263,7 +263,7 @@ class Trainer():
             if self.params.log_to_wandb:
                 for pg in self.optimizer.param_groups:
                     lr = pg['lr']
-                wandb.log({'lr': lr, 'epoch': self.epoch})
+                wandb.log({'lr': lr, 'epoch': self.epoch}, step=self.epoch)
 
 
             # Early stopping logic should be outside of world_rank check
@@ -386,7 +386,7 @@ class Trainer():
                                 dist.all_reduce(diagnostic_logs[key].detach())
                                 diagnostic_logs[key] = float(diagnostic_logs[key] / dist.get_world_size())
                     if self.params.log_to_wandb:
-                        wandb.log(diagnostic_logs, step=(self.epoch - 1) * total_iterations + self.iters)
+                        wandb.log(diagnostic_logs, step=self.iters)
 
             
             torch.cuda.empty_cache()
@@ -402,7 +402,7 @@ class Trainer():
                     diagnostic_logs['train_loss'] = float(diagnostic_logs['train_loss'] / dist.get_world_size())
                 logs = {'train_loss': diagnostic_logs['train_loss'], 'epoch': self.epoch}
                 if self.params.log_to_wandb:
-                    wandb.log(logs)
+                    wandb.log(logs, step=self.epoch)
                 return tr_time, data_time, diagnostic_logs
         else:
             with torch.no_grad():
@@ -416,7 +416,7 @@ class Trainer():
                         logs[key] = float(logs[key] / dist.get_world_size())
 
             if self.params.log_to_wandb:
-                wandb.log(logs)
+                wandb.log(logs, step=self.epoch)
 
 
         return tr_time, data_time, logs
@@ -467,7 +467,7 @@ class Trainer():
                         logging.info("Logging validation [input, target, prediction] to wandb table.")
                         _wandb_table = wandb.Table(columns=self.wandb_table.columns, data=self.wandb_table.data)
                         _wandb_table = log_input_target_prediction(inputs, labels, outputs, _wandb_table, self.epoch)
-                        wandb.log({f"EPOCH {self.epoch} Validation Input/Target/Prediction" : _wandb_table})
+                        wandb.log({f"EPOCH {self.epoch} Validation Input/Target/Prediction" : _wandb_table}, step=self.epoch)
                         #self.wandb_table = _wandb_table
 
         valid_time = time.time() - valid_start
@@ -481,7 +481,7 @@ class Trainer():
                 logs[key] = float(logs[key] / dist.get_world_size())
 
         if self.params.log_to_wandb:
-            wandb.log(logs)
+            wandb.log(logs, self.epoch)
 
 
         return valid_time, logs

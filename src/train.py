@@ -24,9 +24,6 @@ if __name__=='__main__':
     parser.add_argument("--yaml_config", type=str)
     parser.add_argument("--config", type=str)
     parser.add_argument("--epochs", default=0, type=int)
-    parser.add_argument("--fresh_start", 
-                        action="store_true", 
-                        help="Start training from scratch, ignoring existing checkpoints")
 
     args = parser.parse_args()
 
@@ -75,7 +72,7 @@ if __name__=='__main__':
 
     
     params['experiment_dir'] = os.path.abspath(expDir)
-    ckpt_path_globstr = 'training_checkpoints/ckpt_*.tar'
+    ckpt_path_globstr = 'training_checkpoints/ckpt*.tar'
     best_ckpt_path = 'training_checkpoints/best_ckpt.tar'
     params['checkpoint_path_globstr'] = os.path.join(expDir, ckpt_path_globstr)
     params['best_checkpoint_path'] = os.path.join(expDir, best_ckpt_path)
@@ -84,7 +81,7 @@ if __name__=='__main__':
     checkpoint_exists = len(checkpoint_paths) > 0
 
     # Determine whether to resume or start fresh
-    if params.fresh_start or args.fresh_start:
+    if params.fresh_start:
         params['resuming'] = False
         if checkpoint_exists and world_rank == 0:
             logging.info("Fresh start requested. Ignoring existing checkpoint.")

@@ -11,6 +11,7 @@ from torch.nn.parallel import DistributedDataParallel
 from utils.diagnostics import grad_norm, grad_max, log_input_target_prediction
 import glob
 from natsort import natsorted
+from pathlib import Path
 #from torch.profiler import profile, record_function, ProfilerActivity
 
 
@@ -57,9 +58,30 @@ class Trainer():
         logging.info("data loader initialized")
 
  
+        # Set up logging with wandb - only on main process
         if params.log_to_wandb:
-            wandb.init(config=params, name=params.name, group=params.group, project=params.project)
 
+            # Create checkpoint directory if it doesn't exist
+            checkpoint_dir = os.path.dirname(self.params.checkpoint_path_globstr)
+            if not os.path.exists(checkpoint_dir) and world_rank == 0:
+                os.makedirs(checkpoint_dir, exist_ok=True)
+            
+            wandb_id_path = Path(checkpoint_dir) / "wandb_id.txt"
+
+            if params.resuming and wandb_id_path.exists():               # Resume run
+                run_id  = wandb_id_path.read_text().strip()
+                resume  = "allow"
+                logging.info(f"Resuming wandb run with id: {run_id}")
+            else:                                    # fresh run
+                run_id  = wandb.util.generate_id()
+                if world_rank == 0:
+                    wandb_id_path.write_text(run_id)
+                resume  = None
+                logging.info(f"Starting fresh wandb run with id: {run_id}")
+
+            wandb.init(config=params, name=params.name, group=params.group, project=params.project,
+                      id=run_id, resume=resume)
+            
             wandb.define_metric("epoch")
             epoch_metrics = ['lr', 'train_loss', 'val_loss']
             for metric in epoch_metrics:
@@ -148,37 +170,48 @@ class Trainer():
                                                  find_unused_parameters=True)
        
 
-        self.iters = 0
-        self.startEpoch = 0
-        if params.resuming:
-            checkpoint_path = natsorted([file for file in glob.glob(self.params.checkpoint_path_globstr) if os.path.isfile(file)])[-1]
-            print(f'RESTORE CKPT: {checkpoint_path}')
-            self.restore_checkpoint(checkpoint_path)
-        else:
-            logging.info("Starting fresh training run")
-
-        self.epoch = self.startEpoch
-
-
         # Set learning rate scheduluer
         if params["scheduler"] == 'ReduceLROnPlateau':
             self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, factor=float(params['factor']), patience=int(params['patience']), 
                                                                         cooldown=int(params['cooldown']), mode='min')
         elif params["scheduler"] == 'CosineAnnealingLR':
-            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=params["max_epochs"], eta_min=float(params['lr_min']),
-                                                                        last_epoch=self.startEpoch-1)
+            # Adjustig max epochs input to CosineAnnealingLR scduler if using warmup
+            if params['warmup']:
+                # Subtract warmup epochs from max_epochs
+                T_max = int(params["max_epochs"]) - int(params['warmup_totaliters'])
+            else:
+                T_max = int(params["max_epochs"]) 
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=T_max, eta_min=float(params['lr_min']))
         elif params["scheduler"] == 'CosineAnnealingWarmRestarts':
             self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=int(params["T_0"]), 
-                                                                                  T_mult=int(params["T_mult"]), eta_min=float(params['lr_min']),
-                                                                                  last_epoch=self.startEpoch-1)
+                                                                                  T_mult=int(params["T_mult"]), eta_min=float(params['lr_min']))
         else:
             self.scheduler = None
 
-        # Warm up epochs if using
-        if params.warmup:
-            self.warmuplr = torch.optim.lr_scheduler.LinearLR(self.optimizer, start_factor=params.warmup_startfactor,
-                                                              total_iters=params.warmup_totaliters)
+        # Chain warmup with main scheduler using SequentialLR
+        if params.warmup and self.scheduler is not None:
+            warmuplr = torch.optim.lr_scheduler.LinearLR(self.optimizer, start_factor=params.warmup_startfactor,
+                                                         total_iters=params.warmup_totaliters)
+            main_scheduler = self.scheduler
+            self.scheduler = torch.optim.lr_scheduler.SequentialLR(
+                self.optimizer,
+                schedulers=[warmuplr, main_scheduler],
+                milestones=[params.warmup_totaliters]
+            )
 
+
+        if params.resuming:
+            ckpt_dir = Path(self.params.checkpoint_path_globstr).parent
+            checkpoint_path = str(ckpt_dir / "ckpt.tar")
+            print(f'RESTORE CKPT: {checkpoint_path}')
+            self.restore_checkpoint(checkpoint_path) # Restore model and optimizer state and learning rate scheduler state if any
+        else:
+            logging.info("Starting fresh training run")
+            self.iters = 0
+            self.best_valid_loss = 1.e6
+            self.startEpoch = 0
+
+        self.epoch = self.startEpoch
 
         if params["log_to_screen"]:
             logging.info("Number of trainable model parameters: {}".format(self.count_parameters()))
@@ -197,11 +230,10 @@ class Trainer():
         if self.params["log_to_screen"]:
             logging.info("Starting training loop ...")
 
-        best_valid_loss = 1.e6
         early_stopping_counter = 0
         early_stop_epoch_triggered = False
 
-        for epoch in range(self.params["max_epochs"]):
+        for epoch in range(self.startEpoch, self.params["max_epochs"]):
             
             if self.early_stop_epoch is not None and epoch > self.early_stop_epoch:
                 if self.params.log_to_screen:
@@ -219,16 +251,13 @@ class Trainer():
             valid_time, valid_logs = self.validate_one_epoch()
 
             # Adjust lr rate schedule if using
-            if self.params["warmup"] and (self.startEpoch + epoch) < self.params["warmup_totaliters"]:
-                self.warmuplr.step()
-            else:
-                if self.params["scheduler"] == 'ReduceLROnPlateau':
-                    self.scheduler.step(valid_logs['valid_loss'])
-                elif self.params["scheduler"] == 'CosineAnnealingLR' or self.params["scheduler"] == 'CosineAnnealingWarmRestarts':
-                    self.scheduler.step()
-                    if self.epoch >= self.params.max_epochs:
-                        logging.info("Terminating training after reaching params.max_epochs while LR scheduler is set to CosineAnnealingLR")
-                        break
+            if self.params["scheduler"] == 'ReduceLROnPlateau':
+                self.scheduler.step(valid_logs['valid_loss'])
+            elif self.params["scheduler"] == 'CosineAnnealingLR' or self.params["scheduler"] == 'CosineAnnealingWarmRestarts':
+                self.scheduler.step()
+                if self.epoch >= self.params.max_epochs:
+                    logging.info("Terminating training after reaching params.max_epochs while LR scheduler is set to CosineAnnealingLR")
+                    break
 
             
             if self.params.log_to_wandb:
@@ -238,18 +267,18 @@ class Trainer():
 
 
             # Early stopping logic should be outside of world_rank check
-            if valid_logs["valid_loss"] <= best_valid_loss:
-               best_valid_loss  = valid_logs['valid_loss']
+            if valid_logs["valid_loss"] <= self.best_valid_loss:
+               self.best_valid_loss  = valid_logs['valid_loss']
                early_stopping_counter = 0
             else:
                early_stopping_counter += 1
 
-
             if self.world_rank == 0:
                if self.params.save_checkpoint:
-                  checkpoint_path_out = '_'.join(self.params.checkpoint_path_globstr.split('_')[:-1])
+                  ckpt_dir = Path(self.params.checkpoint_path_globstr).parent
+                  checkpoint_path_out = str(ckpt_dir / "ckpt")
                   self.save_checkpoint(checkpoint_path_out + f'.tar')
-                  if valid_logs["valid_loss"] <= best_valid_loss:
+                  if valid_logs["valid_loss"] <= self.best_valid_loss:
                      self.save_checkpoint(self.params.best_checkpoint_path)
                   if (self.epoch+1) in self.params.ckpt_epoch_list:
                       logging.info(f"Saving checkpoint at epoch {self.epoch+1}")
@@ -462,12 +491,23 @@ class Trainer():
         if not model:
             model = self.model
 
-        torch.save({'iters': self.iters, 'epochs': self.epoch, 'model_state': model.state_dict(), 
-                    'optimizer_state_dict': self.optimizer.state_dict()}, checkpoint_path)
+        checkpoint = {
+            'iters': self.iters, 
+            'epochs': self.epoch, 
+            'best_valid_loss': self.best_valid_loss,
+            'model_state': model.state_dict(), 
+            'optimizer_state_dict': self.optimizer.state_dict()
+        }
+
+        # Save scheduler state if it exists
+        if self.scheduler is not None:
+            checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
+
+        torch.save(checkpoint, checkpoint_path)
 
 
     def restore_checkpoint(self, checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location='cuda:{}'.format(self.params.local_rank))
+        checkpoint = torch.load(checkpoint_path, map_location='cuda:{}'.format(self.params.local_rank), weights_only=False)
         try:
             self.model.load_state_dict(checkpoint['model_state'])
         except:
@@ -478,9 +518,16 @@ class Trainer():
             self.model.load_state_dict(new_state_dict)
         self.iters = checkpoint['iters']
         self.startEpoch = checkpoint['epochs']
+        self.best_valid_loss = checkpoint.get('best_valid_loss', 1.e6)
         print(f'START EPOCH:', self.startEpoch)
-        if self.params.resuming:
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        # Restore optimizer state
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        # Restore scheduler state if it exists
+        if self.scheduler is not None and 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            logging.info('Learning rate scheduler state restored')
 
     def E1_integrator(self, input, train=False):
         """

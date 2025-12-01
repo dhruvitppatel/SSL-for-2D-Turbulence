@@ -18,5 +18,5 @@ This emulator is designed to:
 git clone https://github.com/envfluids/py2d.git
 cd py2d && pip install -e ./ 
 
-pip install matplotlib wandb timm einops scipy ruamel.yaml nbformat nbconvert natsort torch torchvision
+pip install matplotlib wandb timm einops scipy ruamel.yaml nbformat nbconvert natsort statsmodels imageio scikit-learn timm torch torchvision 
 ```

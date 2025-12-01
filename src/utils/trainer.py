@@ -12,6 +12,7 @@ from utils.diagnostics import grad_norm, grad_max, log_input_target_prediction
 import glob
 from natsort import natsorted
 from pathlib import Path
+import numpy as np
 #from torch.profiler import profile, record_function, ProfilerActivity
 
 
@@ -23,11 +24,14 @@ class Trainer():
         self.world_rank = world_rank
         self.device = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
         self.early_stop_epoch = params['early_stop_epoch'] - 1 if 'early_stop_epoch' in params else None
-        
+        self.device_ID = dist.get_rank()
 
         logging.info('rank %d, begin data loader init' % world_rank)
         print(params)
 
+        self.iteration_metrics = []
+        self.valid_loss = 0
+        self.mean_epoch_loss = 0
 
         # Construct training/validation dataloaders
         self.train_dataloader, self.train_dataset, self.train_sampler = get_dataloader(data_dir=params["data_dir"],
@@ -259,11 +263,25 @@ class Trainer():
                     logging.info("Terminating training after reaching params.max_epochs while LR scheduler is set to CosineAnnealingLR")
                     break
 
-            
-            if self.params.log_to_wandb:
-                for pg in self.optimizer.param_groups:
-                    lr = pg['lr']
-                wandb.log({'lr': lr, 'epoch': self.epoch}, step=self.epoch)
+            if self.params.log_to_wandb and self.device_ID == 0:
+
+                for i, metrics in enumerate(self.iteration_metrics):
+                    wandb.log(metrics, step=metrics['iteration'])
+
+                # Then log the epoch summary
+                epoch_summary = {
+                    "epoch": self.epoch,
+                    "epoch_loss": self.mean_epoch_loss,
+                    "epoch_loss_best": self.best_loss,
+                    "valid_loss": self.valid_loss,
+                    "valid_loss_best": self.best_valid_loss,
+                    "lr": self.optimizer.param_groups[0]['lr']
+                    }
+
+                wandb.log(epoch_summary, step=self.iters)
+
+
+                # wandb.log({'lr': lr, 'epoch': self.epoch}, step=self.epoch)
 
 
             # Early stopping logic should be outside of world_rank check
@@ -298,10 +316,10 @@ class Trainer():
                break
 
 
-        ## After training loop ends
-        #if self.params.log_to_wandb:
-        #   if self.world_rank == 0:
-        #      self.log_all_plots_wandb()
+        # After training loop ends
+        if self.params.log_to_wandb:
+          if self.world_rank == 0:
+             self.log_all_plots_wandb()
         
         if self.params.log_to_screen:
            if early_stop_epoch_triggered:
@@ -320,10 +338,11 @@ class Trainer():
 
 
         total_iterations = len(self.train_dataloader)
+        losses = []
+        diagnostic_logs = {}
 
-        if self.params.diagnostic_logs:
-            diagnostic_logs = {}
-
+        if self.params.log_to_wandb and self.device_ID == 0:
+            self.iteration_metrics = []
 
         for i, data in enumerate(self.train_dataloader):
 
@@ -363,7 +382,12 @@ class Trainer():
                 if self.params['spectral_loss']:
                     loss += self.model.spectral_loss(labels, outputs, self.params['spectral_loss_weight'], self.params['spectral_loss_threshold_wavenumber'])
 
+            losses.append(loss.item())
             loss.backward()
+
+            # Apply gradient clipping if specified
+            if self.params.get('clip_grad_norm') is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.params['clip_grad_norm'])
 
             self.optimizer.step()
 
@@ -385,11 +409,34 @@ class Trainer():
                             else:
                                 dist.all_reduce(diagnostic_logs[key].detach())
                                 diagnostic_logs[key] = float(diagnostic_logs[key] / dist.get_world_size())
-                    if self.params.log_to_wandb:
-                        wandb.log(diagnostic_logs, step=self.iters)
+                    # if self.params.log_to_wandb:
+                    #     wandb.log(diagnostic_logs, step=self.iters)
+
+                            # Store metrics for this iteration
+                                        # Calculate maximum gradient value across all parameters
+                if self.params.log_to_wandb and self.device_ID == 0:
+
+                    batch_grad_norm = grad_norm(self.model)
+                    batch_grad_max = grad_max(self.model)
+                    iter_metrics = {
+                        "iteration": self.iters,
+                        "batch_loss": loss.item(),
+                        "batch_grad_norm": batch_grad_norm,
+                        "batch_grad_max": batch_grad_max,
+                    }
+
+                    self.iteration_metrics.append(iter_metrics)
 
             
             torch.cuda.empty_cache()
+
+            self.mean_epoch_loss = np.mean(losses)
+
+            if self.epoch <= 1:
+                self.best_loss = self.mean_epoch_loss
+            else:
+                if self.mean_epoch_loss < self.best_loss:
+                    self.best_loss = self.mean_epoch_loss
 
             # print(f'=============== PROFILER ==============\n')
             # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
@@ -401,8 +448,8 @@ class Trainer():
                     dist.all_reduce(torch.tensor(diagnostic_logs['train_loss']).to(self.device))
                     diagnostic_logs['train_loss'] = float(diagnostic_logs['train_loss'] / dist.get_world_size())
                 logs = {'train_loss': diagnostic_logs['train_loss'], 'epoch': self.epoch}
-                if self.params.log_to_wandb:
-                    wandb.log(logs, step=self.epoch)
+                # if self.params.log_to_wandb:
+                #     wandb.log(logs, step=self.iters)
                 return tr_time, data_time, diagnostic_logs
         else:
             with torch.no_grad():
@@ -415,8 +462,8 @@ class Trainer():
                         dist.all_reduce(logs[key])
                         logs[key] = float(logs[key] / dist.get_world_size())
 
-            if self.params.log_to_wandb:
-                wandb.log(logs, step=self.epoch)
+            # if self.params.log_to_wandb:``
+            #     wandb.log(logs, step=self.iters)
 
 
         return tr_time, data_time, logs
@@ -466,12 +513,13 @@ class Trainer():
                     if (self.epoch % self.params.wandb_table_logging_interval == 1) and (i == 0):
                         logging.info("Logging validation [input, target, prediction] to wandb table.")
                         _wandb_table = wandb.Table(columns=self.wandb_table.columns, data=self.wandb_table.data)
-                        _wandb_table = log_input_target_prediction(inputs, labels, outputs, _wandb_table, self.epoch)
-                        wandb.log({f"EPOCH {self.epoch} Validation Input/Target/Prediction" : _wandb_table}, step=self.epoch)
+                        _wandb_table = log_input_target_prediction(inputs, labels, outputs, _wandb_table, self.iters)
+                        wandb.log({f"EPOCH {self.epoch} Validation Input/Target/Prediction" : _wandb_table}, step=self.iters)
                         #self.wandb_table = _wandb_table
 
         valid_time = time.time() - valid_start
 
+        self.valid_loss = valid_loss/n_valid_batches
         logs = {'valid_loss': valid_loss / n_valid_batches, 'epoch': self.epoch}
         if dist.is_initialized():
             for key in sorted(logs.keys()):
@@ -480,8 +528,8 @@ class Trainer():
                 dist.all_reduce(logs[key])
                 logs[key] = float(logs[key] / dist.get_world_size())
 
-        if self.params.log_to_wandb:
-            wandb.log(logs, self.epoch)
+        # if self.params.log_to_wandb:
+        #     wandb.log(logs, self.iters)
 
 
         return valid_time, logs

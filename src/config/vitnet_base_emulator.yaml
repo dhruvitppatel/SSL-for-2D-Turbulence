@@ -54,6 +54,7 @@ BASE: &BASE
     warmup_totaliters: 3 # Warm-up learning rate for the first N epochs
 
     weight_decay: 1e-7 # 1e-7   # 1e-7 for video; 1e-6 for image # Regularization term for loss function (L2 norm)
+    clip_grad_norm: 1.0 # Gradient clipping to avoid exploding gradients, null for no clipping
     max_epochs: 1000
     checkpointing: !!bool False # True : For large models gradinet checkpointing is used to save memory (slows down upto 2 or so) May need to increase for patch size = 2
  
